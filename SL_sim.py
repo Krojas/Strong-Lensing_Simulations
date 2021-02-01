@@ -21,7 +21,7 @@ from importlib import reload
 import re
 from astropy.visualization import lupton_rgb
 from astropy.visualization.lupton_rgb import AsinhZScaleMapping
-import DES_mod as DES
+#import DES_mod as DES
 from math import isnan
 from scipy import interpolate
 import os
@@ -74,23 +74,6 @@ def ap_phot_plot(xcen,ycen,image,e1,e2,theta,zp):
     mag = -2.5*np.log10(phot_table['aperture_sum'][0])+zp
     return phot_table['aperture_sum'][0],mag
 
-
-def DES_psf(ra,dec,tile,x0,y0,bands,path):
-	p = []
-	for i in range(len(bands)):
-		try:
-			psf = glob.glob(path+'*'+bands[i]+'_psfcat.psf')
-			if psf==[]:
-				p = [1]
-			else:
-				psf = psf[0]
-				pex = psfex.PSFEx(psf)
-				psf = pex.get_rec(y0, x0)
-				psf /= psf.sum()
-				p.append(psf)
-		except TypeError:
-			print('Error')
-	return p
 
 
 def background_rms_image(cb,image):
@@ -176,6 +159,10 @@ def make_lensmodel(lens_info,theta_E,source_info,box_f):
 	theta_ra, theta_dec = solver.image_position_from_source(x_shift,y_shift, kwargs_lens_list)
 	if len(theta_ra) <= 1:
 		x_shift,y_shift = -0.2,-0.2 #arcseconds1
+	if abs(x_shift) >= int(theta_E) or abs(y_shift) >= int(theta_E):
+		x_shift,y_shift = 0.3,-0.3
+		print('BLABLA')
+	print('HERE',min(x_caustic_list)-min(x_caustic_list)*box_f[0],max(x_caustic_list)+max(x_caustic_list)*box_f[1],min(y_caustic_list)-min(y_caustic_list)*box_f[0],max(y_caustic_list)+max(y_caustic_list)*box_f[1])
 	return {'lens_light_model_list' : ['SERSIC_ELLIPSE'],'kwargs_light_lens':[kwargs_light_lens],'lens_light_model_class':lens_light_model_class,'kwargs_lens_list':kwargs_lens_list,'kwargs_data_lens':kwargs_data_lens,'source_shift':[x_shift,y_shift]}
 
 
@@ -244,115 +231,6 @@ def make_lens_sys(lensmodel,src_camera_kwargs,source_info,kwargs_band_src,lens_i
 
 	return {'simulation':final,'src_image':source_info['image'],'mag_sim':mag_sim,'mag_lensed_src':mag_LS,'image_HD':image_HD,'resize':source_size_scale,'conv':source_conv,'magnification':magnification}
 
-def make_lens_sys_old(lensmodel,src_camera_kwargs,source_info,kwargs_band_src,lens_info):
-	#Model
-	kwargs_model_postit = {'lens_model_list': ['SIE'],'source_light_model_list': ['INTERPOL']} 
-	#kwargs_model_postit = {'source_light_model_list': ['INTERPOL']}
-	kwargs_lens = lensmodel['kwargs_lens_list'] # SIE model
-	#data
-	numpix = len(source_info['image'])*source_info['HR_factor']
-	kwargs_source_mag = [{'magnitude': source_info['magnitude'], 'image': source_info['image'], 'scale': source_info['deltapix']/source_info['HR_factor'], 'phi_G': 0, 'center_x': lensmodel['source_shift'][0], 'center_y': lensmodel['source_shift'][1]}] #phi_G is to rotate, centers are to shift in arcsecs 
-	sim = SimAPI(numpix=numpix,kwargs_single_band=kwargs_band_src, kwargs_model=kwargs_model_postit)
-	kwargs_numerics = {'supersampling_factor': source_info['HR_factor']}
-	imSim = sim.image_model_class(kwargs_numerics)
-	_,kwargs_source,_ =sim.magnitude2amplitude(kwargs_source_mag=kwargs_source_mag)
-	#simulation
-	image_HD = imSim.image(kwargs_lens=kwargs_lens,kwargs_source=kwargs_source)
-	#image_HD = imSim.image(kwargs_source=kwargs_source)
-
-	mag_LS = -2.5*np.log10(sum(sum(image_HD))) + source_info['zero_point']
-	magnification = source_info['magnitude']-mag_LS
-	#convolution
-	npsf=inter_psf(lens_info['psf'],lens_info['deltapix'],0.03)
-	source_conv0 = signal.fftconvolve(image_HD,npsf,mode='same') 
-	source_conv = source_conv0 # * ( sum(image_HD.flatten())/sum(source_conv0.flatten()))
-
-	print('flux_src:',sum(image_HD.flatten()))
-	print('flux after conv:',sum(source_conv.flatten()))
-
-	#resize in deltapix
-	#source_lensed_res = block_reduce(image_HD, source_info['HR_factor'])
-	source_lensed_res = block_reduce(source_conv, source_info['HR_factor'])
-	bs=np.zeros([450,450])
-	val=int((len(bs)-len(source_lensed_res))/2)
-	bs[val:val+len(source_lensed_res),val:val+len(source_lensed_res)]=source_lensed_res
-	source_size_scale=block_reduce(bs, int(len(bs)/len(lens_info['image'])))
-
-#	source_lensed_res = block_reduce(source_conv, source_info['HR_factor'])
-#	val=int((len(bs)-len(source_lensed_res))/2)
-#	bs = source_lensed_res[val:val+len(source_lensed_res)-val,val:val+len(source_lensed_res)-val]
-#	source_size_scale=block_reduce(bs, int(len(bs)/len(lens_info['image'])))
-	
-
-	#psf convolution
-	#source_conv = signal.fftconvolve(source_size_scale,lens_info['psf'],mode='same')
-
-	
-	#flux rescale
-	flux_img=sum(image_HD.flatten())*(10**(0.4*(lens_info['zero_point']-source_info['zero_point'])))#source_info['flux']*(10**(0.4*(lens_info['zero_point']-source_info['zero_point'])))
-	#sc=source_info['flux']/flux_img
-	sc=sum(source_conv.flatten())/flux_img
-	source_scaled =source_size_scale/sc
-	#source_scaled = source_conv/sc
-
-	#cut right pixels size
-	lens_size   = min(np.shape(lens_info['image']))
-	source_size = min(np.shape(source_scaled))
-
-
-	if lens_size > source_size:
-		xin = yin = int((lens_size - source_size)/2) 
-		lens_final = lens_info['image'][xin:xin+ source_size,yin:yin+source_size]
-		source_final = source_scaled
-	
-	if lens_size < source_size:
-		xin = yin = math.ceil((source_size - lens_size)/2)
-		source_final = source_scaled[xin:xin+ lens_size,yin:yin+lens_size]
-		lens_final = lens_info['image']
-	else:
-		lens_final = lens_info['image']
-		source_final = source_scaled
-	final = lens_final + source_final
-
-	phot_ap = 2
-	_,mag_sim=ap_phot(len(final)/2,len(final)/2,final,phot_ap/(lens_info['deltapix']),phot_ap/(lens_info['deltapix']),np.pi/2.,lens_info['zero_point'])
-	
-	if magnification == np.float('-inf') or magnification==np.float('inf'):
-		print('INFINITE MAGNIFICATION')
-		magnification = 10000
-
-	return {'simulation':final,'src_image':source_info['image'],'mag_sim':mag_sim,'mag_lensed_src':mag_LS,'image_HD':image_HD,'resize':source_size_scale,'conv':source_conv,'magnification':magnification}
-
-
-
-def SN_sim(cb,files):
-	image= files#fits.open(files)[1].data
-	bkg_rms  = background_rms_image(cb,image)
-	pix_bk = 4*(cb**2)
-	full_flux = sum(sum(image))
-	SN    = full_flux/(pix_bk*bkg_rms)
-	return SN
-
-def get_HST_data(hst_id,HST_path_folder,zp,band1,band2,band3):
-	b1=fits.open(HST_path_folder+band1+'_band/source_'+str(hst_id)+'_'+band1+'.fits')[0]
-	xsrc,ysrc=np.where(np.max(b1.data)==b1.data)
-	if len(xsrc)==1 or len(ysrc) == 0:
-		b1.data = np.nan_to_num(b1.data,nan=1)
-		xsrc,ysrc = [len(b1.data)/2],[len(b1.data)/2]
-		#fail_file = glob.glob('source_fail.csv')
-		#if len(fail_file) == 0:
-		#	df = pd.DataFrame(columns=['source_id'])
-		#	df['source_id'] = np.zeros(1000)+10
-		#	df.iloc[0] = hst_id
-		#	df.to_csv('source_fail.csv',index=False)
-		#else:
-		#	df = pd.read_csv(fail_file[0])
-		#	indx=min(df[df['source_id']==10].index)
-		#	df.iloc[indx] = hst_id
-		#	df.to_csv('source_fail.csv',index=False)
-	fxsrc1,magsrc1=ap_phot(xsrc[0],ysrc[0],b1.data,10/0.03,10/0.03,np.pi/2,zp)
-	pos = [xsrc,ysrc]
-	return {str(band1): b1, str(band2): b1, str(band3): b1,'hst_id':hst_id,'center':pos,'mag':magsrc1}
 
 def save_sim_mband(name_var,dictionary,image_list,path,name): 
 	i,j,k = 0,0,0
@@ -364,30 +242,6 @@ def save_sim_mband(name_var,dictionary,image_list,path,name):
 		new_hdul.append(fits.ImageHDU(image_list[j],header=hdr))
 	new_hdul.writeto(str(path)+str(name)+'.fits',overwrite=True)
 
-'''
-def inter_psf(psf,old_px,new_px):
-	X = Y = np.linspace(-len(psf)/2,len(psf)/2,len(psf))
-	x,y = np.meshgrid(X,Y)
-	f = interpolate.interp2d(x,y,psf,kind='linear')
-	Xnew=Ynew = np.linspace(-len(psf)/2,len(psf)/2,len(psf)*(old_px/new_px))
-	nimg = f(Xnew,Ynew) 
-	fimg=nimg/(sum(nimg.flatten())/sum(psf.flatten()))
-	print('before',sum(psf.flatten()))
-	print('now',sum(fimg.flatten()))
-	return fimg
-'''
-
-def inter_psf(psf,old_px,new_px):
-	Xnew=Ynew = np.linspace(-len(psf)/2,len(psf)/2,len(psf)*(old_px/new_px))
-	xnew,ynew = np.meshgrid(Xnew,Ynew)
-	X = Y = np.linspace(-len(psf)/2,len(psf)/2,len(psf))
-	x,y = np.meshgrid(X,Y)
-	p0=np.asarray([x,y]).T
-	nx,ny,nz=np.shape(p0)
-	p=p0.reshape(nx*ny,2)
-	val=psf.reshape(nx*ny)
-	grid_z0 = griddata(p, val, (xnew, ynew), method='linear')
-	return grid_z0
 
 
 def scale_val(image_array):
@@ -442,3 +296,18 @@ def sqrt_sc(inputArray, scale_min=None, scale_max=None):
     imageData = np.sqrt(imageData)
     imageData = imageData / np.sqrt(scale_max - scale_min)
     return imageData
+
+
+def inter_psf(psf,old_px,new_px):
+	Xnew=Ynew = np.linspace(-len(psf)/2,len(psf)/2,len(psf)*(old_px/new_px))
+	xnew,ynew = np.meshgrid(Xnew,Ynew)
+	X = Y = np.linspace(-len(psf)/2,len(psf)/2,len(psf))
+	x,y = np.meshgrid(X,Y)
+	p0=np.asarray([x,y]).T
+	nx,ny,nz=np.shape(p0)
+	p=p0.reshape(nx*ny,2)
+	val=psf.reshape(nx*ny)
+	grid_z0 = griddata(p, val, (xnew, ynew), method='linear')
+	return grid_z0
+
+
