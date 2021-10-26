@@ -6,7 +6,7 @@ The sources are gri-HSC ultra-deep stacks images combined with HST F814W high re
 
 The lenses in this example are LRGs from the Dark Energy Survey. 
 
-These simulations were created to be used in **Rojas et al. in prep.**  
+These simulations were created to be used in [**Rojas et al. 2021 (submitted)**](https://arxiv.org/pdf/2109.00014.pdf)
 
 In this repo you can find:
 
